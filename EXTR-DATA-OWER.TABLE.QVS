@@ -1,0 +1,122 @@
+//-----------------------------------------------------------------------------------------------------------------------------------
+//EXTRACT FOR YEAR
+//-----------------------------------------------------------------------------------------------------------------------------------
+
+Let vTabela 	= SubField(DocumentTitle(),'-',3);
+Let vConexao 	= SubField(SubField(DocumentTitle(),'-',3),'.',1);
+Let vAgora 		= now();
+
+Let vMes 		= 3;   // quantidade de meses considerados no ano atual que devem recarregar anos anteriores
+Let vAno 		= 1;  // quantidade de anos anteriores a serem recarregados
+Let vValidaMes 	= if(month(today())<=$(vMes),1);
+
+Set vDataFrom 	= 'DATE_INSERT';   //nome do campo da data base da tabela de origem ''no nullable''
+Set vDataMerge 	= 'DATE_UPDATE';  //nome do campo da data de atualização tabela de origem
+Set vIdMerge 	= 'ID_PK';       //chave primaria da tabela de origem
+Set vLib		= [lib://Arquivos_QVD/.../]; // diretorio para arquivos.qvd
+
+TRACE $(vAgora) - $(vMes);
+LIB CONNECT TO $(vConexao);
+
+Switch $(vValidaMes)
+	case 1
+      Temp:
+      SQL 
+      SELECT DISTINCT EXTRACT(YEAR FROM $(vDataFrom)) AS ANO
+      FROM $(vTabela)
+      WHERE EXTRACT(YEAR FROM $(vDataFrom)) BETWEEN EXTRACT(YEAR FROM sysdate) - $(vAno) AND EXTRACT(YEAR FROM sysdate)
+      ORDER BY 1;
+
+      For Each a in FieldValueList('ANO')
+      Let vTabela_Temp = vTabela&'_'&$(a);      
+	  Set vQWhere 	= [$(vDataFrom) BETWEEN TO_DATE('01/01/$(a) 00:00:00', 'DD/MM/YYYY hh24:mi:ss') AND TO_DATE('31/12/$(a) 23:59:59', 'DD/MM/YYYY hh24:mi:ss')];
+	  Set vQvdFile  ='$(vLib)$(vTabela_Temp).qvd';
+				
+        if FileSize('$(vQvdFile)') > 0 then 
+		
+          $(vTabela_Temp):
+            LOAD * FROM [$(vQvdFile)] (qvd);          
+
+            Merge($(vDataMerge),LastChangeDate) on $(vIdMerge) Concatenate($(vTabela_Temp))
+            Load If(Exists($(vIdMerge)),'U','I') AS OPERLOAD, *;
+            SQL SELECT * FROM $(vTabela) WHERE $(vQWhere);                              
+
+            Inner Keep($(vTabela_Temp))                    
+            SQL SELECT distinct $(vIdMerge) FROM $(vTabela) WHERE $(vQWhere);                          
+
+        else 
+          $(vTabela_Temp):        
+            SQL SELECT * FROM $(vTabela) WHERE $(vQWhere);
+            
+        endif;         
+        	
+      let vAgora = now();
+      TRACE $(vAgora);
+      store $(vTabela_Temp) into [$(vLib)$(vTabela_Temp).qvd] (qvd);
+      drop table $(vTabela_Temp);
+
+      next a;
+		drop table Temp;
+        
+	Default 
+	  Temp:
+      SQL 
+      SELECT DISTINCT EXTRACT(YEAR FROM $(vDataFrom)) AS ANO
+      FROM $(vTabela)
+      WHERE EXTRACT(YEAR FROM $(vDataFrom)) = EXTRACT(YEAR FROM sysdate)
+      ORDER BY 1;
+
+      For Each a in FieldValueList('ANO')
+      Let vTabela_Temp = vTabela&'_'&$(a);
+      Set vQWhere 	= [$(vDataFrom) BETWEEN TO_DATE('01/01/$(a) 00:00:00', 'DD/MM/YYYY hh24:mi:ss') AND TO_DATE('31/12/$(a) 23:59:59', 'DD/MM/YYYY hh24:mi:ss')];
+      Set vQvdFile='$(vLib)$(vTabela_Temp).qvd';
+				
+        if FileSize('$(vQvdFile)') > 0 then 
+		
+          $(vTabela_Temp):
+            LOAD * FROM [$(vQvdFile)] (qvd); 
+
+            Merge($(vDataMerge),LastChangeDate) on $(vIdMerge) Concatenate($(vTabela_Temp))
+            Load If(Exists($(vIdMerge)),'U','I') AS OPERLOAD, *;
+            SQL SELECT * FROM $(vTabela) WHERE $(vQWhere);
+
+            Inner Keep($(vTabela_Temp))                    
+            SQL SELECT distinct $(vIdMerge) FROM $(vTabela) WHERE $(vQWhere); 
+
+        else 
+          $(vTabela_Temp):             
+            SQL SELECT * FROM $(vTabela) WHERE $(vQWhere);
+          
+        endif; 
+	     
+      let vAgora = now();
+      TRACE $(vAgora);
+      store $(vTabela_Temp) into [$(vLib)$(vTabela_Temp).qvd] (qvd);
+      drop table $(vTabela_Temp);
+
+      next a;
+		drop table Temp,QueryResult;
+	
+    End Switch;
+    
+    trace Fim carga Incremental;
+	
+//-----------------------------------------------------------------------------------------------------------------------------------
+//CONCATENATE FILE
+//-----------------------------------------------------------------------------------------------------------------------------------
+	
+	
+SET vQvdFileList = ['lib://Arquivos_QVD/.../.../$(vTabela)_*.qvd'];
+
+For Each a in FileList ($(vQvdFileList))
+ trace ['$(a)'];
+
+	[$(vTabela)]:
+	Load *
+	From ['$(a)'](qvd);
+
+next;
+
+store $(vTabela) into [lib://Arquivos_QVD/.../.../$(vTabela).qvd] (qvd);
+      drop table $(vTabela);
+	
